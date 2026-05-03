@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, X, GraduationCap, Edit2, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+const API_URL = "https://utsho-app.onrender.com";
+
 const Teachers = () => {
   const navigate = useNavigate();
   const [teachers, setTeachers] = useState([]);
@@ -17,9 +19,23 @@ const Teachers = () => {
     fetchTeachers();
   }, []);
 
+  // ✅ AUTH HEADER
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem("token");
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    };
+  };
+
   const fetchTeachers = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/teachers');
+      const response = await fetch(`${API_URL}/api/teachers`, {
+        headers: getAuthHeaders()
+      });
+
+      if (!response.ok) throw new Error("Failed to fetch");
+
       const data = await response.json();
       setTeachers(data);
     } catch (error) {
@@ -48,24 +64,83 @@ const Teachers = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const url = editMode 
-      ? `http://localhost:5000/api/teachers/${currentId}` 
-      : 'http://localhost:5000/api/teachers';
-    const method = editMode ? 'PUT' : 'POST';
 
     try {
-      const response = await fetch(url, {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
-      });
+      const token = localStorage.getItem("token");
 
-      if (response.ok) {
+      if (editMode) {
+        // ✅ ADDED MISSING EDIT LOGIC (PUT REQUEST)
+        const res = await fetch(`${API_URL}/api/teachers/${currentId}`, {
+          method: "PUT",
+          headers: getAuthHeaders(),
+          body: JSON.stringify(formData)
+        });
+
+        if (!res.ok) throw new Error("Update failed");
+
+        alert("Teacher Updated Successfully!");
         setIsModalOpen(false);
-        fetchTeachers(); 
+        fetchTeachers(); // Refresh list
+
+      } else {
+        // ✅ ORIGINAL CREATE LOGIC
+        // 1. CREATE USER
+        const userRes = await fetch(`${API_URL}/api/auth/create-user`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            name: formData.name,
+            password: formData.phone,
+            role: "teacher"
+          })
+        });
+
+        let userData;
+        try { userData = await userRes.json(); } catch { userData = null; }
+
+        if (!userRes.ok) {
+          console.error("User creation error:", userData);
+          alert("User creation failed");
+          return;
+        }
+
+        // 2. CREATE TEACHER
+        const teacherRes = await fetch(`${API_URL}/api/teachers`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            ...formData,
+            userId: userData.userId
+          })
+        });
+
+        let teacherData;
+        try { teacherData = await teacherRes.json(); } catch { teacherData = null; }
+
+        if (!teacherRes.ok) {
+          console.error("Teacher creation error:", teacherData);
+          alert("Teacher creation failed");
+          return;
+        }
+
+        // 3. SUCCESS
+        alert(`Teacher Created!\nID: ${userData.userId}\nPassword: ${formData.phone}`);
+
+        setIsModalOpen(false);
+
+        // 4. INSTANT UPDATE
+        setTeachers(prev => [teacherData, ...prev]);
       }
-    } catch (error) {
-      console.error("Error saving teacher:", error);
+
+    } catch (err) {
+      console.error("FINAL ERROR:", err);
+      alert("Something went wrong");
     }
   };
 
@@ -74,15 +149,18 @@ const Teachers = () => {
     if (!confirmDelete) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/teachers/${currentId}`, {
-        method: 'DELETE'
+      const response = await fetch(`${API_URL}/api/teachers/${currentId}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
       });
-      if (response.ok) {
-        setIsModalOpen(false);
-        fetchTeachers();
-      }
+
+      if (!response.ok) throw new Error("Delete failed");
+
+      setIsModalOpen(false);
+      fetchTeachers();
     } catch (error) {
       console.error("Error deleting teacher:", error);
+      alert("Failed to delete teacher");
     }
   };
 
@@ -90,35 +168,53 @@ const Teachers = () => {
     <div className="min-h-screen bg-gray-50 pb-20 font-sans flex flex-col items-center">
       <div className="w-full max-w-md bg-gray-50 min-h-screen relative">
 
-        <header className="flex items-center gap-4 p-5 bg-white relative z-10 shadow-sm">
-          <button onClick={() => navigate(-1)} className="p-1 hover:bg-gray-100 rounded transition-colors">
-            <ArrowLeft className="w-6 h-6 text-gray-800" />
+        {/* ✅ FIXED STICKY TOP NAV BAR */}
+        <header className="sticky top-0 z-40 flex items-center gap-4 p-5 bg-white shadow-sm w-full">
+          <button 
+            onClick={() => navigate(-1)} 
+            className="p-2 -ml-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 rounded-full transition-colors"
+          >
+            <ArrowLeft className="w-6 h-6" />
           </button>
           <div>
             <h1 className="text-lg font-bold text-gray-900 leading-tight">Teachers Directory</h1>
-            <p className="text-xs text-gray-500">Manage school teachers</p>
+            <p className="text-xs text-gray-500">Manage Utsho teachers</p>
           </div>
         </header>
 
+        {/* --- TEACHER LIST --- */}
         <div className="px-5 mt-5 space-y-4">
           {teachers.length === 0 ? (
-            <div className="text-center mt-20 text-gray-400 flex flex-col items-center">
-              <GraduationCap className="w-12 h-12 mb-2 opacity-50" />
-              <p className="text-sm">No teachers found. Add your first teacher!</p>
+            <div className="text-center mt-24 text-gray-400 flex flex-col items-center bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+              <div className="bg-red-50 p-4 rounded-full mb-3">
+                <GraduationCap className="w-10 h-10 text-[#CC0000] opacity-80" />
+              </div>
+              <p className="text-sm font-semibold text-gray-700">No teachers found</p>
+              <p className="text-xs mt-1">Tap the + button to add your first teacher!</p>
             </div>
           ) : (
             teachers.map((teacher) => (
-              <div key={teacher._id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center group">
+              <div 
+                key={teacher._id} 
+                className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow border-l-4 border-l-[#CC0000]"
+              >
                 <div>
                   <h3 className="font-bold text-gray-900 text-sm">{teacher.name}</h3>
-                  <p className="text-xs text-gray-500 mt-1">Subject: <span className="font-semibold">{teacher.subject}</span></p>
-                  <p className="text-xs text-gray-400 mt-1">{teacher.phone}</p>
+                  <div className="text-[11px] text-gray-500 mt-1 font-medium space-x-2 mb-1.5">
+                    <span className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">ID: {teacher.userId || "N/A"}</span>
+                    <span className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{teacher.subject}</span>
+                  </div>
+                  <p className="text-[11px] text-gray-500">📞 {teacher.phone}</p>
+                  {teacher.email && <p className="text-[11px] text-gray-500 mt-0.5">✉️ {teacher.email}</p>}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="bg-blue-50 text-blue-600 text-[10px] font-bold px-2 py-1 rounded-full">
+                <div className="flex items-center gap-3">
+                  <span className="bg-blue-50 text-blue-600 text-[10px] font-bold px-2.5 py-1 rounded-full border border-blue-100">
                     Teacher
                   </span>
-                  <button onClick={() => openEditModal(teacher)} className="p-2 text-gray-400 hover:text-blue-600 bg-gray-50 rounded-lg transition-colors">
+                  <button 
+                    onClick={() => openEditModal(teacher)} 
+                    className="p-1.5 text-gray-400 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 rounded-lg transition-colors"
+                  >
                     <Edit2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -127,58 +223,62 @@ const Teachers = () => {
           )}
         </div>
 
+        {/* --- ADD BUTTON --- */}
         <button 
           onClick={openAddModal}
-          className="fixed bottom-6 right-[calc(50%-10rem)] md:right-[calc(50%-13rem)] w-14 h-14 bg-[#CC0000] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-red-700 hover:scale-105 transition-all z-40"
+          className="fixed bottom-6 right-[calc(50%-10rem)] w-14 h-14 bg-[#CC0000] text-white rounded-full shadow-lg flex items-center justify-center hover:bg-red-700 hover:scale-105 transition-all z-40"
         >
           <Plus className="w-8 h-8" />
         </button>
 
+        {/* --- MODAL --- */}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl w-full max-w-sm p-6 relative">
-              <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-sm p-6 relative shadow-2xl">
+              
+              <button 
+                onClick={() => setIsModalOpen(false)} 
+                className="absolute top-4 right-4 p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-800 rounded-full transition-colors"
+              >
                 <X className="w-5 h-5" />
               </button>
               
-              <h2 className="text-lg font-bold text-gray-900 mb-4">
+              <h2 className="text-xl font-bold text-gray-900 mb-5">
                 {editMode ? 'Edit Teacher' : 'Add New Teacher'}
               </h2>
               
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Full Name</label>
-                  <input type="text" required className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:outline-none focus:border-[#CC0000]"
-                    value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} />
+                  <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">Full Name</label>
+                  <input type="text" required className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#CC0000]/50 focus:border-[#CC0000] transition-colors"
+                    value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} placeholder="e.g. Prof. Rahman" />
                 </div>
                 
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Subject Taught</label>
-                  <input type="text" placeholder="e.g. Mathematics" required className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:outline-none focus:border-[#CC0000]"
-                    value={formData.subject} onChange={(e) => setFormData({...formData, subject: e.target.value})} />
+                  <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">Subject Taught</label>
+                  <input type="text" required className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#CC0000]/50 focus:border-[#CC0000] transition-colors"
+                    value={formData.subject} onChange={(e) => setFormData({...formData, subject: e.target.value})} placeholder="e.g. Mathematics" />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Phone Number</label>
-                    <input type="tel" required className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:outline-none focus:border-[#CC0000]"
-                      value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Email (Optional)</label>
-                    <input type="email" className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:outline-none focus:border-[#CC0000]"
-                      value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} />
-                  </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">Phone Number <span className="text-gray-400 font-normal lowercase">(used as password)</span></label>
+                  <input type="tel" required className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#CC0000]/50 focus:border-[#CC0000] transition-colors"
+                    value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} placeholder="01XXX-XXXXXX" />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 uppercase tracking-wide">Email (Optional)</label>
+                  <input type="email" className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#CC0000]/50 focus:border-[#CC0000] transition-colors"
+                    value={formData.email} onChange={(e) => setFormData({...formData, email: e.target.value})} placeholder="teacher@gmail.com" />
                 </div>
                 
-                <div className="pt-2 flex flex-col gap-2">
-                  <button type="submit" className="w-full bg-[#CC0000] text-white font-bold py-3 rounded-lg hover:bg-red-700 transition-colors">
+                <div className="pt-4 flex flex-col gap-3">
+                  <button type="submit" className="w-full bg-[#CC0000] text-white font-bold py-3 rounded-xl shadow-md hover:bg-red-700 transition-colors">
                     {editMode ? 'Update Teacher' : 'Save Teacher'}
                   </button>
 
-                  {/* ONLY SHOW DELETE BUTTON IF WE ARE EDITING */}
                   {editMode && (
-                    <button type="button" onClick={handleDelete} className="w-full flex items-center justify-center gap-2 text-red-600 bg-red-50 font-bold py-3 rounded-lg hover:bg-red-100 transition-colors">
+                    <button type="button" onClick={handleDelete} className="w-full flex items-center justify-center gap-2 text-red-600 bg-red-50 font-bold py-3 rounded-xl hover:bg-red-100 transition-colors">
                       <Trash2 className="w-4 h-4" /> Delete Teacher
                     </button>
                   )}
